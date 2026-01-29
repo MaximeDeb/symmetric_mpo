@@ -9,7 +9,7 @@ description = "Symmetric Matrix Product Operators for quantum many-body systems"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "Maxim", email = "maxim@example.com"}
+    {name = "MaximeD"}
 ]
 keywords = [
     "quantum",

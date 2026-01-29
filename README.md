@@ -18,14 +18,8 @@ A Python library for efficient manipulation of **symmetric Matrix Product Operat
 ## Installation
 
 ```bash
-pip install symmetric-mpo
-```
-
-Or from source:
-
-```bash
-git clone https://github.com/username/symmetric-mpo.git
-cd symmetric-mpo
+git clone https://github.com/username/lib-symmetric_mpo.git
+cd lib-symmetric_mpo
 pip install -e .
 ```
 
@@ -126,7 +120,7 @@ Only blocks with consistent quantum numbers are stored and contracted.
 
 After time evolution, the MPO can be rotated to the natural orbital basis where the correlation matrix is diagonal. This is done through a sequence of Givens rotations applied as local gates.
 
-## Performance Tips
+## Performance
 
 1. **Use `data_as_tensors=False`** for 1D systems (matrix storage is faster)
 2. **Choose appropriate `chi_max`** based on entanglement growth
@@ -142,36 +136,11 @@ mpo.export("my_mpo.h5")
 loaded = SymmetricMPO.load("my_mpo.h5")
 ```
 
-## Contributing
-
-Contributions welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch
-3. Add tests for new functionality
-4. Submit a pull request
-
-## License
-
-MIT License - see LICENSE file for details.
-
-## Citation
-
-If you use this library, please cite:
-
-```bibtex
-@software{symmetric_mpo,
-  title = {Symmetric MPO Library},
-  author = {Maxim},
-  year = {2024},
-  url = {https://github.com/username/symmetric-mpo}
-}
-```
-
 ## Acknowledgments
 
-This library implements techniques from tensor network theory. Key references:
+Key references:
 
-- Vidal, G. "Efficient classical simulation of slightly entangled quantum computations" (2003)
-- Hastings, M. B. "An area law for one-dimensional quantum systems" (2007)
-- Schollwöck, U. "The density-matrix renormalization group in the age of matrix product states" (2011)
+- Vidal, "Efficient classical simulation of slightly entangled quantum computations" (2003)
+- Hastings, "An area law for one-dimensional quantum systems" (2007)
+- Schollwöck, "The density-matrix renormalization group in the age of matrix product states" (2011)
+- Gisti, Luitz, Debertolis, "Symmetry resolved out-of-time-order correlators of Heisenberg spin chains using projected matrix product operators" (2025)
