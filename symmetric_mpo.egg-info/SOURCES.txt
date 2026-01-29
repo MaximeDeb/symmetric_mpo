@@ -1,0 +1,7 @@
+README.md
+pyproject.toml
+symmetric_mpo.egg-info/PKG-INFO
+symmetric_mpo.egg-info/SOURCES.txt
+symmetric_mpo.egg-info/dependency_links.txt
+symmetric_mpo.egg-info/requires.txt
+symmetric_mpo.egg-info/top_level.txt
