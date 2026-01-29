@@ -58,7 +58,7 @@ Documentation = "https://symmetric-mpo.readthedocs.io"
 Repository = "https://github.com/username/symmetric-mpo"
 
 [tool.setuptools.packages.find]
-where = ["."]
+where = ["src"]
 include = ["symmetric_mpo*"]
 
 [tool.black]
