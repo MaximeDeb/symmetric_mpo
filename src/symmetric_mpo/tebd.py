@@ -21,11 +21,12 @@ if TYPE_CHECKING:
 
 def apply_gate(
     mpo: 'SymmetricMPO',
-    U: 'SymmetricGate',
-    U_dag: 'SymmetricGate',
+    gate: 'SymmetricGate',
+    gate_dag: 'SymmetricGate | None',
     site1: int,
     site2: int,
-    both_sides: bool = True
+    both_sides: bool = True,
+    side: Literal["L", "R"] = "L"
 ) -> tuple['SymmetricMPO', float]:
     """
     Apply a two-site gate to an MPO using TEBD.
@@ -37,15 +38,16 @@ def apply_gate(
     ----------
     mpo : SymmetricMPO
         The MPO to evolve.
-    U : SymmetricGate
-        The gate to apply (U |psi>).
-    U_dag : SymmetricGate
-        The adjoint gate (<psi| U^dag).
+    gate : SymmetricGate
+        The gate to apply on sigma (left physical indices).
+    gate_dag : SymmetricGate or None
+        The conjugate gate (used when both_sides=True).
     site1, site2 : int
         The two adjacent sites (should be site2 = site1 + 1).
     both_sides : bool
-        If True, apply U from left and U_dag from right.
-        
+        If True, apply gate from left and gate_dag from right.
+    side : {"L", "R"}
+        Which side to apply when both_sides=False and right_gate=None.        
     Returns
     -------
     mpo : SymmetricMPO
@@ -57,24 +59,46 @@ def apply_gate(
     B1 = mpo.TN[f"B{site1}"]
     B2 = mpo.TN[f"B{site2}"]
     
-    PhiB = tensor_contract(B1, B2, ([3], [0]))
-    # Swap to standard order
-    PhiB = swap_indices(PhiB, [0, 1, 3, 2, 4, 5], [0, 1, 2, 3, 4, 5])
+    # PhiB = tensor_contract(B1, B2, ([3], [0]))
+    # # Swap to standard order
+    # PhiB = swap_indices(PhiB, [0, 1, 3, 2, 4, 5], [0, 1, 2, 3, 4, 5])
     
-    # Apply U from the left
-    UPhiB = tensor_contract(U, PhiB, ([2, 3], [1, 2]))
-    UPhiB = swap_indices(UPhiB, [2, 0, 1, 3, 4, 5], [0, 1, 2, 3, 4, 5])
+    # # Apply U from the left
+    # UPhiB = tensor_contract(U, PhiB, ([2, 3], [1, 2]))
+    # UPhiB = swap_indices(UPhiB, [2, 0, 1, 3, 4, 5], [0, 1, 2, 3, 4, 5])
     
-    if both_sides:
-        # Apply U_dag from the right
-        UPhiBU = tensor_contract(UPhiB, U_dag, ([3, 4], [2, 3]))
-        UPhiBU = swap_indices(UPhiBU, [0, 1, 2, 4, 5, 3], [0, 1, 2, 3, 4, 5])
+    # if both_sides:
+    #     # Apply U_dag from the right
+    #     UPhiBU = tensor_contract(UPhiB, U_dag, ([3, 4], [2, 3]))
+    #     UPhiBU = swap_indices(UPhiBU, [0, 1, 2, 4, 5, 3], [0, 1, 2, 3, 4, 5])
+    # else:
+    #     UPhiBU = UPhiB
+    
+    if not both_sides and side == "R":
+        ind = [3, 4]
+        tr = [2, 3, 0, 4, 1, 5]
     else:
-        UPhiBU = UPhiB
+        ind = [1, 2]
+        tr = [2, 0, 1, 3, 4, 5]
+    
+    PhiB = tensor_contract(B1, B2, ([3], [0]))
+    PhiB = swap_indices(PhiB, [0, 1, 3, 2, 4, 5], [0, 1, 2, 3, 4, 5])
+        
+    # Swap to standard order
+    UPhiB = tensor_contract(gate, PhiB, ([2, 3], ind))
+    UPhiB = swap_indices(UPhiB, tr, [0, 1, 2, 3, 4, 5])
+
+    if both_sides:
+        # UPhiB = tensor_contract(UPhiB, gate_dag, ([3, 4], [2, 3]))
+        # UPhiB = swap_indices(UPhiB, [0, 1, 2, 4, 5, 3], [0, 1, 2, 3, 4, 5])
+        
+        UPhiB = tensor_contract(gate_dag, UPhiB, ([2, 3], [3, 4]))
+        UPhiB = swap_indices(UPhiB, [2, 3, 4, 0, 1, 5], [0, 1, 2, 3, 4, 5])
+
     
     # Split back into two tensors
     mpo, discarded = _symmetric_canonicalize(
-        UPhiBU, mpo, site1, site2,
+        UPhiB, mpo, site1, site2,
         truncation_type=mpo.truncation_type
     )
     

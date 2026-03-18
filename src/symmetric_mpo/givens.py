@@ -11,78 +11,36 @@ import numpy as np
 from numpy.typing import NDArray
 from typing import Literal
 
-
-def givens_rotations(
-    mat: NDArray[np.complexfloating],
-    loc: list[int] | NDArray[np.intp],
-    sect: NDArray[np.intp] | None = None,
-    direction: Literal["left", "right"] = "left"
-) -> tuple[NDArray[np.intp], NDArray[np.complexfloating]]:
+def givens_rotations(mat: np.ndarray, loc: list[int], 
+                    sect: NDArray[np.intp] | None = None, 
+                    direction: str = "left") -> tuple[NDArray[np.intp], NDArray[np.complexfloating]]:
     """
-    Compute Givens rotations to localize orbitals on the MPS.
+    Compute Givens rotations to localize orbitals.
     
-    Given a transfer matrix between current and desired orbital bases,
-    computes a sequence of 2x2 Givens rotations that localizes specified
-    orbitals to the edge of a region.
-    
-    Parameters
-    ----------
-    mat : ndarray, complex
-        Transfer matrix where rows are current orbitals and columns
-        are desired orbitals.
-    loc : array-like of int
-        Column indices in `mat` of orbitals to localize.
-    sect : ndarray of int, optional
-        Site indices that will be affected by the rotation.
-        If None, uses all sites.
-    direction : {"left", "right"}, default "left"
-        Where to localize the orbitals:
-        - "left": Stack localized orbitals at the left of sect (+----)
-        - "right": Stack localized orbitals at the right of sect (----+)
+    Args:
+        mat: Transfer matrix
+        loc: Columns corresponding to orbitals to localize
+        sect: Orbitals affected by rotation
+        direction: "left" or "right" for localization direction
         
-    Returns
-    -------
-    indices : ndarray, shape (n_gates, 2)
-        Sites on which each local Givens rotation is applied.
-    givens : ndarray, shape (n_gates, 2, 2), complex
-        The 2x2 Givens rotation matrices to apply.
-        
-    Notes
-    -----
-    The Givens rotations eliminate vector components one at a time,
-    "pushing" the weight to the target edge. For direction="left",
-    we sweep from right to left; for direction="right", from left to right.
-    
-    Examples
-    --------
-    >>> mat = np.eye(4, dtype=complex)
-    >>> indices, givens = givens_rotations(mat, [3], np.arange(4), "right")
+    Returns:
+        indices: Site pairs for Givens rotations
+        givens: Givens rotation matrices (2x2)
     """
-    loc = np.atleast_1d(loc)
-    
-    if sect is None:
-        sect = np.arange(mat.shape[0])
-    
-    # Pre-allocate with estimated capacity (can grow if needed)
-    max_gates = len(loc) * (len(sect) - 1)
-    givens_list = np.zeros((max_gates, 2, 2), dtype=complex)
-    indices_list = np.zeros((max_gates, 2), dtype=np.intp)
-    n_gates = 0
+    givens_list = []
+    indices_list = []
     
     M = mat.copy()
-    
     if direction == "right":
         loc = loc[::-1]
-        
+    
     for n, k in enumerate(loc):
-        # Determine sweep direction
         if direction == "right":
             reduction = np.arange(sect[0], sect[-1] - n)
         else:
             reduction = np.arange(sect[-1] - 1, sect[0] + n - 1, -1)
-            
-        layer_indices = []
-        layer_givens = []
+        
+        i_n, g_n = [], []
         v = M[:, k].copy()
         
         for j in reduction:
@@ -93,46 +51,21 @@ def givens_rotations(
                 g = np.eye(2, dtype=complex)
             else:
                 if direction == "left":
-                    # Eliminate component at j (move weight down)
-                    g = np.array([
-                        [q.conj(), p.conj()],
-                        [-p, q]
-                    ], dtype=complex) / norm
+                    g = np.array([[q.conj(), p.conj()], [-p, q]], dtype=complex) / norm
                     v[j], v[j + 1] = norm, 0
                 else:
-                    # Eliminate component at j (move weight up)
-                    g = np.array([
-                        [p, -q.conj()],
-                        [q, p.conj()]
-                    ], dtype=complex) / norm
+                    g = np.array([[p, -q.conj()], [q, p.conj()]], dtype=complex) / norm ## Careful where is the minus with .T or not on the MPO ! 
                     v[j], v[j + 1] = 0, norm
-                    
-            layer_indices.append([j, j + 1])
-            layer_givens.append(g)
-        
-        # Update basis for accumulated Givens rotations
-        if layer_indices:
-            rot = rotation_from_givens(layer_indices, layer_givens, sect)
-            M = rot @ M
             
-            # Add to output arrays
-            n_new = len(layer_indices)
-            if n_gates + n_new > len(givens_list):
-                # Expand arrays if needed
-                givens_list = np.concatenate([
-                    givens_list, 
-                    np.zeros((max_gates, 2, 2), dtype=complex)
-                ])
-                indices_list = np.concatenate([
-                    indices_list,
-                    np.zeros((max_gates, 2), dtype=np.intp)
-                ])
-                
-            indices_list[n_gates:n_gates + n_new] = layer_indices
-            givens_list[n_gates:n_gates + n_new] = layer_givens
-            n_gates += n_new
+            i_n.append([j, j + 1])
+            g_n.append(g)
+        
+        if i_n:
+            indices_list.extend(i_n)
+            givens_list.extend(g_n)
     
-    return indices_list[:n_gates], givens_list[:n_gates]
+    return np.array(indices_list), np.array(givens_list)
+
 
 
 def rotation_from_givens(

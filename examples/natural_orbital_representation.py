@@ -22,7 +22,80 @@ from symmetric_mpo import (
     compute_R_matrix,
     givens_rotations,
     rotation_from_givens,
+    apply_spin_op,
 )
+
+
+def _rotate_mpo_to_natural_basis(mpo, A, method="Hermitian"):
+    """
+    Rotate an MPO to the natural orbital basis using Givens rotations.
+    
+    Parameters
+    ----------
+    mpo : SymmetricMPO
+        The MPO to rotate (modified in-place).
+    A : ndarray
+        The off-diagonal block of the R matrix.
+    method : str
+        "Hermitian" for eigenvalue decomposition, "Unitary" for SVD.
+    """
+    L = mpo.L
+    params = {'L': L, 'd': mpo.d}
+    
+    active = np.arange(L)
+    
+    for i in range(L):
+        l = L - i
+        sect = active[:l]
+        A_sub = A[:l, :l]
+        
+        if method == "Hermitian":
+            ev, evecs = np.linalg.eigh(A_sub)
+            order = np.argsort(0.5 - np.abs(ev))[::-1]
+            ev, evecs = ev[order], evecs[:, order]
+            
+            indices, givens = givens_rotations(evecs, [l - 1], sect, direction="right")
+            L_givens = R_givens = givens
+        else:
+            U, S, Vd = np.linalg.svd(A_sub)
+            order = np.argsort(0.5 - np.abs(S))[::-1]
+            S = S[order]
+            L_ev, R_ev = U[:, order], Vd.conj().T[:, order]
+            
+            indices, L_givens = givens_rotations(L_ev, [l - 1], sect, direction="right")
+            _, R_givens = givens_rotations(R_ev.conj(), [l - 1], sect, direction="right")
+        
+        # Apply Givens rotations
+        for m, ind in enumerate(indices):
+            L_giv = L_givens[m]
+            R_giv = R_givens[m].conj() if method != "Hermitian" else L_giv
+            
+            U_gate = SymmetricGate(
+                2 * mpo.phys_dims, 0, params,
+                gate_type="Hamiltonian", model="givens",
+                alpha=mpo.alpha, data_as_tensors=mpo.data_as_tensors,
+                rot=L_giv
+            )
+            U_dag_gate = SymmetricGate(
+                2 * mpo.phys_dims, 0, params,
+                gate_type="Hamiltonian", model="givens",
+                dag=True, alpha=mpo.alpha, data_as_tensors=mpo.data_as_tensors,
+                rot=R_giv
+            )
+            
+            mpo, _ = apply_gate(mpo, U_gate, U_dag_gate, ind[0], ind[1], both_sides=True)
+
+        # Update A matrix
+        if method == "Hermitian":
+            rot = rotation_from_givens(indices, givens, sect)
+            A[:l, :l] = rot @ A[:l, :l] @ rot.conj().T
+        else:
+            R = compute_R_matrix(mpo, unitary=True, optimized=True)
+            A = R[:L, L:].copy()
+        
+        print(f"  Rotation step {i + 1}/{L}")
+        mpo.print_bond_dimensions()
+
 
 
 def main():
@@ -33,6 +106,7 @@ def main():
     d = 2                 # Local dimension (spin-1/2)
     model = "IRLM"        # "Heis_nn" or "IRLM"
     save_data = False     # Save results to file
+    op_type = "Unitary" # Hermitian or Unitary
     
     # =========================================================================
     # Tensor Network Parameters
@@ -41,7 +115,7 @@ def main():
     alpha = -1                  # Super-charge: -1 (particle-hole) or L+1 (particle number)
     truncation_type = "global"  # "global", "block", or "block_threshold"
     chi_max = 1024              # Maximum bond dimension
-    th_sing_vals = 1e-12        # Singular value threshold
+    th_sing_vals = 1e-16        # Singular value threshold
     data_as_tensors = False     # False for matrix storage (faster in 1D)
     
     # Symmetry sector
@@ -51,9 +125,9 @@ def main():
     # Time Evolution Parameters
     # =========================================================================
     trotter_order = 4     # Trotter order (1, 2, or 4)
-    T_final = 0.5         # Final time
+    T_final = 0.3     # Final time
     dt = 0.01             # Time step
-    obs_interval = 20000  # Compute observables every N steps
+    obs_interval = 20  # Compute observables every N steps
     
     n_steps = int(T_final / dt)
     n_obs = (n_steps // obs_interval) + 1
@@ -76,7 +150,7 @@ def main():
         }
         
     elif model == "IRLM":
-        U_int = 0.2   # Impurity interaction
+        U_int = 0.   # Impurity interaction
         V = 0.2       # Impurity-bath coupling
         gamma = 0.5   # Bath hopping
         ed = 0        # Impurity energy
@@ -87,7 +161,7 @@ def main():
         }
         # Three-part decomposition for IRLM
         gate_layers = {
-            "H0": [np.array([0, 1])],                                    # Impurity
+            "H0": [np.array([0, 1])],                                   # Impurity
             "H1": [np.array([i, i + 1]) for i in range(2, L - 1, 2)],   # Even bath
             "H2": [np.array([i, i + 1]) for i in range(1, L - 1, 2)]    # Odd bath
         }
@@ -135,7 +209,7 @@ def main():
     # =========================================================================
     # Initialize MPO
     # =========================================================================
-    mpo = SymmetricMPO(
+    Op = SymmetricMPO(
         L, d, s, phys_dims,
         chi_max=chi_max,
         alpha=alpha,
@@ -145,8 +219,11 @@ def main():
         truncation_type=truncation_type
     )
     
+    if op_type == "Hermitian":
+        Op = apply_spin_op("sz", Op, 0, "L")
+    
     print("\nInitial bond dimensions:")
-    mpo.print_bond_dimensions()
+    Op.print_bond_dimensions()
     
     # =========================================================================
     # Storage for Results
@@ -166,9 +243,9 @@ def main():
     for step in trotter_steps:
         # Apply gates for this layer
         for (l1, l2) in gate_layers[step.layer]:
-            mpo, s_disc = apply_gate(
-                mpo, U[step.layer, step.dt], U_dag[step.layer, step.dt],
-                l1, l2, both_sides=False
+            Op, s_disc = apply_gate(
+                Op, U[step.layer, step.dt], U_dag[step.layer, step.dt],
+                l1, l2, both_sides=(op_type=="Hermitian")
             )
             cumulative_error[l1, obs_idx] += s_disc
         
@@ -181,14 +258,17 @@ def main():
             
             # Compute observables
             if step.compute_obs:
-                R = compute_R_matrix(mpo, unitary=True, optimized=True)
+                print(f"  Bond dimensions:")
+                Op.print_bond_dimensions()
+                # Op.entanglement_entropy()
+
+
+                R = compute_R_matrix(Op, unitary=True, optimized=True)
                 R_ev, R_evecs = np.linalg.eigh(R)
                 
                 R_eigenvalues[:, obs_idx] = R_ev
                 times[obs_idx] = t
                 
-                print(f"  Bond dimensions:")
-                mpo.print_bond_dimensions()
                 
                 obs_idx += 1
     
@@ -201,7 +281,7 @@ def main():
     print("\nRotating to natural orbital basis...")
     
     # Compute final R matrix
-    R = compute_R_matrix(mpo, unitary=True)
+    R = compute_R_matrix(Op, unitary=True)
     A = R[:L, L:].copy()
     
     # Get eigenvalues of the off-diagonal block
@@ -212,11 +292,12 @@ def main():
     print(f"  {0.5 - np.abs(A_ev)}")
     
     # Rotate MPO using Givens rotations
-    mpo_rotated = mpo.copy()
-    _rotate_mpo_to_natural_basis(mpo_rotated, A)
+    Op_rotated = Op.copy()
+    _rotate_mpo_to_natural_basis(Op_rotated, A, method = op_type)
     
     print("\nBond dimensions after rotation:")
-    mpo_rotated.print_bond_dimensions()
+    Op_rotated.print_bond_dimensions()
+    Op_rotated.entanglement_entropy()
     
     # =========================================================================
     # Save Results
@@ -239,76 +320,6 @@ def main():
                 f.attrs[key] = val
         
         print(f"\nData saved to {filename}")
-
-
-def _rotate_mpo_to_natural_basis(mpo, A, method="Hermitian"):
-    """
-    Rotate an MPO to the natural orbital basis using Givens rotations.
-    
-    Parameters
-    ----------
-    mpo : SymmetricMPO
-        The MPO to rotate (modified in-place).
-    A : ndarray
-        The off-diagonal block of the R matrix.
-    method : str
-        "Hermitian" for eigenvalue decomposition, "Unitary" for SVD.
-    """
-    L = mpo.L
-    params = {'L': L, 'd': mpo.d}
-    
-    active = np.arange(L)
-    
-    for i in range(L):
-        l = L - i
-        sect = active[:l]
-        A_sub = A[:l, :l]
-        
-        if method == "Hermitian":
-            ev, evecs = np.linalg.eigh(A_sub)
-            order = np.argsort(0.5 - np.abs(ev))[::-1]
-            ev, evecs = ev[order], evecs[:, order]
-            
-            indices, givens = givens_rotations(evecs, [l - 1], sect, direction="right")
-            L_givens = R_givens = givens
-        else:
-            U, S, Vd = np.linalg.svd(A_sub)
-            order = np.argsort(0.5 - np.abs(S))[::-1]
-            S = S[order]
-            L_ev, R_ev = U[:, order], Vd.conj().T[:, order]
-            
-            indices, L_givens = givens_rotations(L_ev, [l - 1], sect, direction="right")
-            _, R_givens = givens_rotations(R_ev.conj(), [l - 1], sect, direction="right")
-        
-        # Apply Givens rotations
-        for m, ind in enumerate(indices):
-            L_giv = L_givens[m].T
-            R_giv = R_givens[m].T if method != "Hermitian" else L_giv
-            
-            U_gate = SymmetricGate(
-                2 * mpo.phys_dims, 0, params,
-                gate_type="Hamiltonian", model="givens",
-                alpha=mpo.alpha, data_as_tensors=mpo.data_as_tensors,
-                rot=L_giv
-            )
-            U_dag_gate = SymmetricGate(
-                2 * mpo.phys_dims, 0, params,
-                gate_type="Hamiltonian", model="givens",
-                dag=True, alpha=mpo.alpha, data_as_tensors=mpo.data_as_tensors,
-                rot=R_giv
-            )
-            
-            mpo, _ = apply_gate(mpo, U_gate, U_dag_gate, ind[0], ind[1], both_sides=True)
-        
-        # Update A matrix
-        if method == "Hermitian":
-            rot = rotation_from_givens(indices, givens, sect)
-            A[:l, :l] = rot @ A[:l, :l] @ rot.conj().T
-        else:
-            R = compute_R_matrix(mpo, unitary=True)
-            A = R[:L, L:].copy()
-        
-        print(f"  Rotation step {i + 1}/{L}")
 
 
 if __name__ == "__main__":

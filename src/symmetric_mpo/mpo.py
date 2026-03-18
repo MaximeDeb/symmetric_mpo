@@ -420,9 +420,9 @@ class SymmetricMPO:
             
             # von Neumann entropy
             s_sq = s ** 2
-            s_sq = s_sq[s_sq > 0]  # Avoid log(0)
+            s_sq = s_sq[s_sq > 1e-12]  # Avoid log(0)
             S_entropy = -np.sum(s_sq * np.log(s_sq))
-            print(f"Site {l}: S = {S_entropy:.6f}")
+            print(f"Site {l}: S = {S_entropy:.6f}, BondDim={len(s_sq)}")
             
             if return_bond_dim:
                 bond_dims.append(np.sum(s ** 2 > 1e-14))
